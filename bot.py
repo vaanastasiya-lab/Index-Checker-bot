@@ -11,7 +11,7 @@ from aiogram.types import Message
 
 # --- НАСТРОЙКИ ---
 BOT_TOKEN = "8757758492:AAEOGGor6d9ON7gyqrk_K769OpwhcbUdteE"
-USER_IDS = 
+USER_IDS = [5295327437, 6964867018]
 
 THRESHOLDS = {"moex": 2.0, "vtb": 3.0, "brent": 2.0, "spacex": 3.0}
 NAMES = {
