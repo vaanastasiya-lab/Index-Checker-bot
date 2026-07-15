@@ -10,7 +10,7 @@ from aiogram.types import Message
 
 # --- НАСТРОЙКИ ---
 # Прописываем токен напрямую в код для 100% гарантии запуска
-BOT_TOKEN = "8757758492:AAEOGGor6d9ON7gyqrk_K769OpwhcbUdteE"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 # Список ID пользователей
 USER_IDS = [5295327437, 6964867018]
 
