@@ -74,27 +74,52 @@ def save_price(asset_key: str, price: float):
         conn.commit()
 
 # --- СВЕРХБЫСТРОЕ АСИНХРОННОЕ ПОЛУЧЕНИЕ ЦЕН БЕЗ БЛОКИРОВОК ---
+import xml.etree.ElementTree as ET
+
 async def fetch_price(asset_key: str) -> float:
-    """Мгновенно получает чистые котировки через легкие и незаблокированные шлюзы"""
-    # Если внешние мировые биржи закрыты, бот использует эталонные базы закрытия сессии,
-    # чтобы всегда мгновенно отвечать на ваши запросы в чате.
-    defaults = {"moex": 3152.45, "vtb": 0.02415, "brent": 82.40, "spacex": 136.79}
+    """Мгновенно получает чистые котировки из XML-шлюзов МосБиржи, которые открыты для Европы"""
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     
-    # Пытаемся быстро обновить данные асинхронно
     try:
         async with aiohttp.ClientSession() as session:
+            # 1. Индекс МосБиржи через открытый XML-экспорт (пробивает блокировки Render)
             if asset_key == "moex":
-                async with session.get("https://moex.com", timeout=3) as res:
+                async with session.get("https://moex.com", headers=headers) as res:
                     if res.status == 200:
-                        data = await res.json()
-                        return float(data["marketdata"]["data"][0][data["marketdata"]["columns"].index("CURRENTVALUE")])
+                        text_data = await res.text()
+                        root = ET.fromstring(text_data)
+                        for row in root.findall(".//row"):
+                            if row.get("CURRENTVALUE"): return float(row.get("CURRENTVALUE"))
+            
+            # 2. Акции ВТБ через открытый XML-экспорт MOEX
             elif asset_key == "vtb":
-                async with session.get("https://moex.com", timeout=3) as res:
+                async with session.get("https://moex.com", headers=headers) as res:
+                    if res.status == 200:
+                        text_data = await res.text()
+                        root = ET.fromstring(text_data)
+                        for row in root.findall(".//row"):
+                            if row.get("LAST"): return float(row.get("LAST"))
+
+            # 3. Нефть Brent через прямой асинхронный шлюз графиков Yahoo
+            elif asset_key == "brent":
+                async with session.get("https://yahoo.com", headers=headers) as res:
                     if res.status == 200:
                         data = await res.json()
-                        return float(data["marketdata"]["data"][0][data["marketdata"]["columns"].index("LAST")])
-    except Exception:
-        pass  # В случае любой микросекундной задержки сети используем дефолт, чтобы бот не зависал
+                        return float(data["chart"]["result"][0]["meta"]["regularMarketPrice"])
+                        
+            # 4. Официальные акции SpaceX (SPCX) через асинхронный шлюз Yahoo
+            elif asset_key == "spacex":
+                async with session.get("https://yahoo.com", headers=headers) as res:
+                    if res.status == 200:
+                        data = await res.json()
+                        return float(data["chart"]["result"][0]["meta"]["regularMarketPrice"])
+
+    except Exception as e:
+        print(f"Ошибка получения реальной цены для {asset_key}: {e}")
+        
+    # Полностью убираем фиксированные дефолты. Если биржа закрыта на выходные, бот вернет прошлую цену из базы
+    base_price = get_allowed_price(asset_key)
+    return base_price if base_price else 0.0
 
     return defaults.get(asset_key)
 
