@@ -1,29 +1,25 @@
 import asyncio
 import sqlite3
+import requests
+import xml.etree.ElementTree as ET
 import yfinance as yf
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import threading
+import os
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message
 
 # --- НАСТРОЙКИ ---
-import os
+# Берем токен скрытно из переменных окружения сервера Render
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+# Список ID пользователей для автоматических уведомлений
 USER_IDS = [5295327437, 6964867018]
 
 # Пороги изменений для автоматических уведомлений (в процентах)
 THRESHOLDS = {"moex": 2.0, "vtb": 3.0, "brent": 2.0, "spacex": 3.0}
 
-# Международные рабочие тикеры Yahoo Finance, доступные из дата-центра Render
-YAHOO_TICKERS = {
-    "moex": "IMOEX.ME",
-    "vtb": "VTBR.ME",
-    "brent": "BZ=F",
-    "spacex": "DXYZ"
-}
-
-# Красивые названия для вывода в Telegram
+# Красивые названия для вывода
 NAMES = {
     "moex": "📊 Индекс МосБиржи (IMOEX)",
     "vtb": "🏦 Акции ВТБ (VTBR)",
@@ -68,22 +64,43 @@ def save_price(asset_key: str, price: float):
         cursor.execute('INSERT OR REPLACE INTO asset_prices (asset, price) VALUES (?, ?)', (asset_key, price))
         conn.commit()
 
-# --- СВЕРХНАДЕЖНОЕ ПОЛУЧЕНИЕ КОТИРОВОК ЧЕРЕЗ YAHOO FINANCE ---
+# --- ПОЛУЧЕНИЕ КОТИРОВОК С ДВОЙНЫМ КОНТУРОМ И ЗАЩИТОЙ ---
 def fetch_price(asset_key: str) -> float:
-    """Получает актуальную цену закрытия из глобальной базы Yahoo"""
+    """Получает цены: РФ через защищенный XML ЦБ, мир через Yahoo Finance"""
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     try:
-        ticker_symbol = YAHOO_TICKERS[asset_key]
-        ticker = yf.Ticker(ticker_symbol)
-        
-        # Берем самый надежный дневной срез данных (работает в любом часовом поясе)
-        todays_data = ticker.history(period="1d")
-        
-        if not todays_data.empty:
-            return float(todays_data['Close'].iloc[-1])
-            
-        print(f"[{asset_key}] Таблица пуста для тикера {ticker_symbol}")
+        # 1. Индекс МосБиржи через открытый XML-экспорт (работает по всему миру)
+        if asset_key == "moex":
+            url = "https://moex.com"
+            response = requests.get(url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                root = ET.fromstring(response.content)
+                for row in root.findall(".//row"):
+                    if row.get("CURRENTVALUE"): return float(row.get("CURRENTVALUE"))
+                
+        # 2. Акции ВТБ через открытый XML-экспорт
+        elif asset_key == "vtb":
+            url = "https://moex.com"
+            response = requests.get(url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                root = ET.fromstring(response.content)
+                for row in root.findall(".//row"):
+                    if row.get("LAST"): return float(row.get("LAST"))
+
+        # 3. Нефть Brent через Yahoo Finance
+        elif asset_key == "brent":
+            ticker = yf.Ticker("BZ=F")
+            todays_data = ticker.history(period="1d")
+            if not todays_data.empty: return float(todays_data['Close'].iloc[-1])
+                
+        # 4. SpaceX через Yahoo Finance (проверяет сначала сегодня, если пусто — берет вчерашний день закрытия)
+        elif asset_key == "spacex":
+            ticker = yf.Ticker("DXYZ")
+            todays_data = ticker.history(period="5d") # Берем срез за 5 дней на случай выходных
+            if not todays_data.empty: return float(todays_data['Close'].iloc[-1])
+
     except Exception as e:
-        print(f"Ошибка Yahoo для {asset_key}: {e}")
+        print(f"Сбой получения данных для {asset_key}: {e}")
     return None
 
 # --- ФОНОВЫЙ МОНИТОРИНГ ---
@@ -118,7 +135,7 @@ async def check_markets_loop():
 # --- ОБРАБОТЧИКИ КОМАНД И ТЕКСТА ---
 @dp.message(CommandStart())
 async def command_start_handler(message: Message):
-    await message.answer(f"Привет, {message.from_user.full_name}!\n\nЯ запущен в облаке Render и проверяю котировки 24/7.")
+    await message.answer(f"Привет, {message.from_user.full_name}!\n\nЯ успешно запущен в облаке Render и проверяю котировки через прямые шлюзы API 24/7.")
 
 @dp.message(F.text)
 async def send_price_on_request(message: Message):
@@ -137,7 +154,6 @@ async def send_price_on_request(message: Message):
         if current_price is not None:
             response_text = f"{NAMES[chosen_asset]}\n💰 Текущая цена: <b>{current_price}</b>\n"
             
-            # Сохраняем цену в базу, если её там не было (для первого ручного запроса)
             if base_price is None:
                 save_price(chosen_asset, current_price)
                 base_price = current_price
@@ -148,7 +164,7 @@ async def send_price_on_request(message: Message):
             
             await message.answer(response_text, parse_mode="HTML")
         else:
-            await message.answer("❌ Сервер котировок временно не вернул данные. Попробуйте в рабочее время биржи.")
+            await message.answer("❌ Сервер котировок временно не вернул данные. Попробуйте чуть позже.")
     else:
         await message.answer("⚠️ Напишите: <i>Мосбиржа, ВТБ, Нефть</i> или <i>SpaceX</i>.")
 
