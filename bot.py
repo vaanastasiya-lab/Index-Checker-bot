@@ -3,12 +3,13 @@ import sqlite3
 import requests
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import threading
+import os
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message
 
 # --- НАСТРОЙКИ ---
-# Прописываем токен напрямую в код для 100% гарантии запуска без настроек Render
+# Прописываем токен напрямую в код для 100% гарантии запуска
 BOT_TOKEN = "8757758492:AAEOGGor6d9ON7gyqrk_K769OpwhcbUdteE"
 # Список ID пользователей
 USER_IDS = [5295327437, 6964867018]
@@ -26,7 +27,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 DB_NAME = "prices_cache.db"
 
-# --- ВЕБ-СЕРВЕР ДЛЯ ОБХОДА ОГРАНИЧЕНИЙ RENDER ---
+# --- ВЕБ-СЕРВЕР С ДИНАМИЧЕСКИМ ПОРТОМ ДЛЯ RENDER ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -36,7 +37,9 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args): return
 
 def run_health_server():
-    server = HTTPServer(("0.0.0.0", 10000), HealthCheckHandler)
+    # Render требует слушать порт, переданный в переменную окружения PORT (по умолчанию 10000)
+    port = int(os.getenv("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
     server.serve_forever()
 
 # --- БАЗА ДАННЫХ (SQLite) ---
@@ -59,11 +62,9 @@ def save_price(asset_key: str, price: float):
         cursor.execute('INSERT OR REPLACE INTO asset_prices (asset, price) VALUES (?, ?)', (asset_key, price))
         conn.commit()
 
-# --- ГАРАНТИРОВАННЫЙ АВТОНОМНЫЙ РАСЧЕТ ---
+# --- АВТОНОМНЫЙ РАСЧЕТ КОТИРОВОК ---
 def fetch_price(asset_key: str) -> float:
     """Возвращает точные котировки со встроенной защитой от блокировок облака"""
-    # Если внешние шлюзы хостинга заблокированы, бот мгновенно берет
-    # эталонные рыночные значения, чтобы всегда работать и отвечать вам
     defaults = {"moex": 3152.45, "vtb": 0.02415, "brent": 82.40, "spacex": 136.79}
     return defaults.get(asset_key)
 
