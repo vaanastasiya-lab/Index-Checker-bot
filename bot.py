@@ -84,42 +84,52 @@ async def fetch_price(asset_key: str) -> float:
         async with aiohttp.ClientSession() as session:
             # 1. Индекс МосБиржи через открытый XML-экспорт (пробивает блокировки Render)
             if asset_key == "moex":
-                async with session.get("https://moex.com", headers=headers) as res:
+                async with session.get("https://moex.com", headers=headers, timeout=5) as res:
                     if res.status == 200:
                         text_data = await res.text()
                         root = ET.fromstring(text_data)
                         for row in root.findall(".//row"):
-                            if row.get("CURRENTVALUE"): return float(row.get("CURRENTVALUE"))
+                            if row.get("CURRENTVALUE"): 
+                                return float(row.get("CURRENTVALUE"))
             
             # 2. Акции ВТБ через открытый XML-экспорт MOEX
             elif asset_key == "vtb":
-                async with session.get("https://moex.com", headers=headers) as res:
+                async with session.get("https://moex.com", headers=headers, timeout=5) as res:
                     if res.status == 200:
                         text_data = await res.text()
                         root = ET.fromstring(text_data)
                         for row in root.findall(".//row"):
-                            if row.get("LAST"): return float(row.get("LAST"))
+                            if row.get("LAST"): 
+                                return float(row.get("LAST"))
 
             # 3. Нефть Brent через прямой асинхронный шлюз графиков Yahoo
             elif asset_key == "brent":
-                async with session.get("https://yahoo.com", headers=headers) as res:
+                async with session.get("https://yahoo.com", headers=headers, timeout=5) as res:
                     if res.status == 200:
                         data = await res.json()
-                        return float(data["chart"]["result"][0]["meta"]["regularMarketPrice"])
+                        result = data.get("chart", {}).get("result")
+                        if result:
+                            return float(result[0]["meta"]["regularMarketPrice"])
                         
             # 4. Официальные акции SpaceX (SPCX) через асинхронный шлюз Yahoo
             elif asset_key == "spacex":
-                async with session.get("https://yahoo.com", headers=headers) as res:
+                async with session.get("https://yahoo.com", headers=headers, timeout=5) as res:
                     if res.status == 200:
                         data = await res.json()
-                        return float(data["chart"]["result"][0]["meta"]["regularMarketPrice"])
+                        result = data.get("chart", {}).get("result")
+                        if result:
+                            return float(result[0]["meta"]["regularMarketPrice"])
 
     except Exception as e:
         print(f"Ошибка получения реальной цены для {asset_key}: {e}")
         
-    # Полностью убираем фиксированные дефолты. Если биржа закрыта на выходные, бот вернет прошлую цену из базы
+    # Если шлюз временно недоступен, берем последнюю цену из базы, а если база пуста — жесткие эталонные котировки
     base_price = get_allowed_price(asset_key)
-    return base_price if base_price else 0.0
+    if base_price:
+        return base_price
+        
+    defaults = {"moex": 2.112, "vtb": 61.65, "brent": 85.89, "spacex": 135.27}
+    return defaults.get(asset_key, 0.0)
 
 # --- ФОНОВЫЙ МОНИТОРИНГ И УВЕДОМЛЕНИЯ ---
 async def check_markets_loop():
