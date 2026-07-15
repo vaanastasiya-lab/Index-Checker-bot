@@ -1,7 +1,7 @@
 import asyncio
 import sqlite3
 import requests
-import xml.etree.ElementTree as ET
+import re
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import threading
 import os
@@ -10,10 +10,23 @@ from aiogram.filters import CommandStart
 from aiogram.types import Message
 
 # --- НАСТРОЙКИ ---
+# Скрытый токен из переменных окружения Render
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-USER_IDS =  USER_IDS = [5295327437, 6964867018]
+# Список ID пользователей
+USER_IDS = [5295327437, 6964867018]
 
+# Пороги изменений для автоматических уведомлений (в процентах)
 THRESHOLDS = {"moex": 2.0, "vtb": 3.0, "brent": 2.0, "spacex": 3.0}
+
+# Соответствие активов техническим тикерам Яндекс.Инвестиций
+YANDEX_TICKERS = {
+    "moex": "IMOEX",   # Индекс МосБиржи
+    "vtb": "VTBR",     # Акции ВТБ
+    "brent": "BZ",     # Нефть Brent
+    "spacex": "SPCX"   # Официальные акции SpaceX на Nasdaq
+}
+
+# Красивые названия для вывода в Telegram
 NAMES = {
     "moex": "📊 Индекс МосБиржи (IMOEX)",
     "vtb": "🏦 Акции ВТБ (VTBR)",
@@ -25,7 +38,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 DB_NAME = "prices_cache.db"
 
-# --- ВЕБ-СЕРВЕР ДЛЯ СТАБИЛЬНОЙ РАБОТЫ НА RENDER ---
+# --- ВЕБ-СЕРВЕР ДЛЯ ОБХОДА ОГРАНИЧЕНИЙ RENDER ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -50,7 +63,7 @@ def get_allowed_price(asset_key: str) -> float:
         cursor = conn.cursor()
         cursor.execute("SELECT price FROM asset_prices WHERE asset = ?", (asset_key,))
         row = cursor.fetchone()
-        return row if row else None
+        return row[0] if row else None
 
 def save_price(asset_key: str, price: float):
     with sqlite3.connect(DB_NAME) as conn:
@@ -58,59 +71,28 @@ def save_price(asset_key: str, price: float):
         cursor.execute('INSERT OR REPLACE INTO asset_prices (asset, price) VALUES (?, ?)', (asset_key, price))
         conn.commit()
 
-# --- ИСПРАВЛЕННЫЙ ШЛЮЗ КОТИРОВОК (ОФИЦИАЛЬНЫЙ ТИКЕР SPCX) ---
+# --- БРОНЕБОЙНЫЙ ШЛЮЗ КОТИРОВОК ЯНДЕКСА (ОБХОД ЧЕРНЫХ СПИСКОВ) ---
 def fetch_price(asset_key: str) -> float:
-    """Получает точные данные: РФ через XML MOEX, мир через шлюз РБК и Nasdaq (SPCX)"""
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    """Получает точную котировку из открытого поискового API Яндекса"""
+    ticker = YANDEX_TICKERS[asset_key]
+    url = f"https://yandex.ru{ticker}"
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json"
+    }
     try:
-        # 1. Индекс МосБиржи через открытый XML-экспорт MOEX
-        if asset_key == "moex":
-            url = "https://moex.com"
-            res = requests.get(url, headers=headers, timeout=10)
-            if res.status_code == 200:
-                root = ET.fromstring(res.content)
-                for row in root.findall(".//row"):
-                    if row.get("CURRENTVALUE"): return float(row.get("CURRENTVALUE"))
-
-        # 2. Акции ВТБ через открытый XML-экспорт MOEX
-        elif asset_key == "vtb":
-            url = "https://moex.com"
-            res = requests.get(url, headers=headers, timeout=10)
-            if res.status_code == 200:
-                root = ET.fromstring(res.content)
-                for row in root.findall(".//row"):
-                    if row.get("LAST"): return float(row.get("LAST"))
-
-        # 3. Нефть Brent через прямой шлюз РБК-Инвестиции
-        elif asset_key == "brent":
-            url = "https://rbc.ru"
-            res = requests.get(url, headers=headers, timeout=10)
-            if res.status_code == 200:
-                data = res.json()
-                if "data" in data and len(data["data"]) > 0:
-                    return float(data["data"].get("last_price"))
-                
-        # 4. Официальные акции SpaceX (SPCX) через API биржевых котировок Nasdaq / РБК-Мир
-        elif asset_key == "spacex":
-            url = "https://rbc.ru"
-            res = requests.get(url, headers=headers, timeout=10)
-            if res.status_code == 200:
-                data = res.json()
-                if "data" in data and len(data["data"]) > 0:
-                    return float(data["data"].get("last_price"))
-            
-            # Резервный шлюз напрямую к Nasdaq, если на РБК задержка
-            nasdaq_url = "https://nasdaq.com"
-            nasdaq_headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}
-            res_nasdaq = requests.get(nasdaq_url, headers=nasdaq_headers, timeout=10)
-            if res_nasdaq.status_code == 200:
-                n_data = res_nasdaq.json()
-                price_str = n_data.get("data", {}).get("primaryData", {}).get("lastSalePrice", "")
-                if price_str:
-                    return float(price_str.replace("$", "").strip())
-
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            # Яндекс возвращает массив точек графика. Берем последнюю актуальную цену
+            points = data.get("data", {}).get(ticker, {}).get("points", [])
+            if points:
+                latest_point = points[-1] # Последняя точка на графике
+                price = latest_point[1]   # Значение цены
+                return float(price)
     except Exception as e:
-        print(f"Ошибка шлюза для {asset_key}: {e}")
+        print(f"Сбой Яндекса для {asset_key}: {e}")
     return None
 
 # --- ФОНОВЫЙ МОНИТОРИНГ ---
@@ -136,12 +118,12 @@ async def check_markets_loop():
                     try: await bot.send_message(chat_id=user_id, text=message_text, parse_mode="HTML")
                     except Exception as e: print(f"Ошибка отправки {user_id}: {e}")
                 save_price(asset, current_price)
-        await asyncio.sleep(600)
+        await asyncio.sleep(600)  # Проверка рынка каждые 10 минут
 
 # --- ОБРАБОТЧИКИ КОМАНД И ТЕКСТА ---
 @dp.message(CommandStart())
 async def command_start_handler(message: Message):
-    await message.answer(f"Привет, {message.from_user.full_name}!\n\nЯ успешно запущен в облаке Render и проверяю официальные акции SpaceX и индексы РФ 24/7.")
+    await message.answer(f"Привет, {message.from_user.full_name}!\n\nЯ успешно запущен в облаке Render и проверяю официальные акции SpaceX, Нефть и индексы РФ 24/7 без блокировок.")
 
 @dp.message(F.text)
 async def send_price_on_request(message: Message):
