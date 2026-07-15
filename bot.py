@@ -121,8 +121,6 @@ async def fetch_price(asset_key: str) -> float:
     base_price = get_allowed_price(asset_key)
     return base_price if base_price else 0.0
 
-    return defaults.get(asset_key)
-
 # --- ФОНОВЫЙ МОНИТОРИНГ И УВЕДОМЛЕНИЯ ---
 async def check_markets_loop():
     while True:
