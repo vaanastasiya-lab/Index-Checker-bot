@@ -222,3 +222,12 @@ async def send_price_on_request(message: Message):
         else:
             await message.answer("❌ Биржевой шлюз временно не вернул данные. Попробуйте еще раз в рабочие часы биржи.", reply_markup=market_keyboard)
     else:
+        await message.answer("⚠️ Пожалуйста, используйте встроенные кнопки меню для выбора котировок.", reply_markup=market_keyboard)
+
+async def main():
+    init_db()
+    threading.Thread(target=run_health_server, daemon=True).start()
+    asyncio.create_task(check_markets_loop())
+    await dp.start_polling(bot)
+if __name__ == "__main__":
+    asyncio.run(main())  # ВОТ ЭТА СТРОЧКА ОБЯЗАТЕЛЬНО ДОЛЖНА БЫТЬ ТУТ!
