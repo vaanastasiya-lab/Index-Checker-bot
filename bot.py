@@ -14,7 +14,7 @@ from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 # Полная безопасность: токен берется скрытно из настроек Render
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 # Список ID пользователей для автоматических уведомлений (ЗАПОЛНИТЕ ТУТ)
-USER_IDS = 
+USER_IDS = [5295327437, 6964867018]
 
 # Процентные пороги для автоматических алармов
 THRESHOLDS = {"moex": 2.0, "vtb": 3.0, "brent": 2.0, "spacex": 3.0}
