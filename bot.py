@@ -108,7 +108,7 @@ async def fetch_price(asset_key: str) -> float:
     if base_price and base_price > 0:
         return base_price
         
-    defaults = {"moex": 3152.45, "vtb": 56.40, "brent": 82.40, "spacex": 136.79}
+    defaults = {"moex": 2.077,20, "vtb": 56.06, "brent": 91.12, "spacex": 120.64}
     return defaults.get(asset_key, 0.0)
 
 # --- АВТОМАТИЧЕСКИЙ КРУГЛОСУТОЧНЫЙ МОНИТОРИНГ РЫНКА ---
