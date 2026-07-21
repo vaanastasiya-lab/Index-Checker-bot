@@ -7,7 +7,6 @@ import os
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 # Импортируем из правильного места в aiogram 3.x
-from aiogram.html import bold
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 
 # --- НАСТРОЙКИ ---
